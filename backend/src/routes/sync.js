@@ -23,10 +23,13 @@ router.post('/sync/github', async (req, res) => {
       filePath,
     } = req.body;
 
-    if (!token || !owner || !repo || !platform || !problemId || !code) {
+    const normalizedCode = typeof code === 'string' ? code.trim() : '';
+    const isPlaceholder = /code not captured|code not available|source not captured/i.test(normalizedCode);
+
+    if (!token || !owner || !repo || !platform || !problemId || !normalizedCode || isPlaceholder) {
       return res.status(400).json({
         success: false,
-        error: 'Missing required parameters (token, owner, repo, platform, problemId, code)',
+        error: 'Missing valid solution details (token, owner, repo, platform, problemId, code)',
       });
     }
 
@@ -37,7 +40,7 @@ router.post('/sync/github', async (req, res) => {
       platform,
       problemId,
       problemTitle: problemTitle || problemId,
-      code,
+      code: normalizedCode,
       language: language || 'txt',
       filePath,
     });

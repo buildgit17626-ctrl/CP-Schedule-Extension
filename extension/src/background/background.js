@@ -17,21 +17,23 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 // Listener for runtime messages from Popup UI or Content Scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.type === 'SYNC_SOLUTION') {
+  const actionType = request.type || request.action;
+
+  if (actionType === 'SYNC_SOLUTION' || actionType === 'syncSolution') {
     handleSolutionSync(request.payload)
       .then((res) => sendResponse({ success: true, data: res }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true; // Keep async response channel open
   }
 
-  if (request.type === 'FORCE_CALENDAR_SYNC') {
+  if (actionType === 'FORCE_CALENDAR_SYNC' || actionType === 'forceCalendarSync') {
     triggerAutomaticCalendarSync()
       .then((count) => sendResponse({ success: true, syncedCount: count }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
   }
 
-  if (request.type === 'AUTHENTICATE_GOOGLE_CALENDAR') {
+  if (actionType === 'AUTHENTICATE_GOOGLE_CALENDAR') {
     clearAndAuthenticateGoogleOAuth()
       .then((token) => {
         if (token) {
@@ -69,7 +71,7 @@ async function clearAndAuthenticateGoogleOAuth() {
 export async function triggerAutomaticCalendarSync() {
   try {
     const config = await getStoredConfig();
-    const backendUrl = config.backendUrl || 'http://localhost:5000';
+    const backendUrl = config.backendUrl || 'https://cp-schedule-extension.onrender.com';
     const autoGCalSync = config.autoGCalSync ?? true;
 
     if (!autoGCalSync) {
@@ -255,13 +257,89 @@ async function authenticateGoogleOAuth(interactive = false) {
   });
 }
 
+/**
+ * Handles solution backup to GitHub repository via backend server.
+ */
+async function handleSolutionSync(payload) {
+  const config = await getStoredConfig();
+  const backendUrl = config.backendUrl || 'https://cp-schedule-extension.onrender.com';
+  const token = config.githubToken;
+  const owner = config.githubOwner;
+  const repo = config.githubRepo;
+  const autoSync = config.autoSync ?? true;
+
+  if (!autoSync) {
+    console.log('[CP-Sync Background] Auto-Sync disabled in settings.');
+    return { skipped: true, reason: 'Auto-Sync disabled' };
+  }
+
+  if (!token || !owner || !repo) {
+    showNotification(
+      'CP-Sync Configuration Error',
+      'Please open extension settings and configure your GitHub token, owner, and repository.'
+    );
+    throw new Error('Missing GitHub settings (token, owner, or repo)');
+  }
+
+  const code = typeof payload?.code === 'string' ? payload.code.trim() : '';
+  if (!code || /code not captured|code not available|source not captured/i.test(code)) {
+    showNotification(
+      'GitHub Sync Skipped',
+      'The accepted submission was detected, but its source code was not available.'
+    );
+    throw new Error('Accepted submission source code was not captured');
+  }
+
+  const extMap = { cpp: 'cpp', python: 'py', python3: 'py', javascript: 'js', java: 'java', go: 'go', rust: 'rs' };
+  const langExt = extMap[(payload.language || '').toLowerCase()] || 'txt';
+  const defaultPath = `${payload.platform}/${payload.problemId}.${langExt}`;
+
+  const requestBody = {
+    token,
+    owner,
+    repo,
+    platform: payload.platform,
+    problemId: payload.problemId,
+    problemTitle: payload.problemTitle || payload.problemId,
+    code,
+    language: payload.language || 'cpp',
+    filePath: payload.filePath || defaultPath,
+  };
+
+  console.log(`[CP-Sync Background] Sending solution payload to cloud backend (${backendUrl}/api/v1/sync/github)...`);
+
+  const res = await fetch(`${backendUrl}/api/v1/sync/github`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody),
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to sync with backend');
+  }
+
+  showNotification(
+    `Synced to GitHub: ${payload.platform}`,
+    `Successfully committed ${payload.problemId} - ${payload.problemTitle} to ${owner}/${repo}!`
+  );
+
+  return data;
+}
+
 function getStoredConfig() {
   return new Promise((resolve) => {
-    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
-      chrome.storage.sync.get(
-        ['backendUrl', 'githubToken', 'githubOwner', 'githubRepo', 'autoSync', 'autoGCalSync', 'gcalAccessToken'],
-        resolve
-      );
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      const keys = ['backendUrl', 'githubToken', 'githubOwner', 'githubRepo', 'autoSync', 'autoGCalSync', 'gcalAccessToken'];
+      if (chrome.storage.sync) {
+        chrome.storage.sync.get(keys, (syncRes) => {
+          chrome.storage.local.get(keys, (localRes) => {
+            resolve({ ...syncRes, ...localRes });
+          });
+        });
+      } else {
+        chrome.storage.local.get(keys, resolve);
+      }
     } else {
       resolve({});
     }

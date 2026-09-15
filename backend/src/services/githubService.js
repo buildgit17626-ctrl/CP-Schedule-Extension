@@ -37,7 +37,11 @@ export async function commitSolutionToGitHub({
   const sanitizedTitle = problemTitle.replace(/[^a-zA-Z0-9_-]/g, '_');
   const targetPath = filePath || `${platform}/${problemId}_${sanitizedTitle}.${ext}`;
 
-  // Check if file already exists to get SHA for update
+  if (typeof code !== 'string' || !code.trim()) {
+    throw new Error('Solution code cannot be empty');
+  }
+
+  // Read the existing file so retries do not create duplicate commits.
   let sha;
   try {
     const existingFile = await octokit.rest.repos.getContent({
@@ -48,6 +52,15 @@ export async function commitSolutionToGitHub({
 
     if (!Array.isArray(existingFile.data)) {
       sha = existingFile.data.sha;
+      const existingCode = Buffer.from(existingFile.data.content || '', 'base64').toString('utf8');
+      if (existingCode === code) {
+        return {
+          commitSha: null,
+          filePath: targetPath,
+          url: existingFile.data.html_url,
+          alreadySynced: true,
+        };
+      }
     }
   } catch (err) {
     // 404 file does not exist, creating new file
