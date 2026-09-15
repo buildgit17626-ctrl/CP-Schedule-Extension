@@ -1,11 +1,18 @@
 // Content Script for AtCoder (atcoder.jp)
-// Detects AC verdicts and sends solution payload to background service worker.
+// Detects AC verdicts and sends the submitted source to the background worker.
 
 console.log('[CP-Sync] AtCoder content script loaded.');
 
-let processedACKeys = new Set();
+const processedACKeys = new Set();
 let pendingAtCoderCode = '';
 let pendingAtCoderLanguage = 'cpp';
+
+function isAcceptedAtCoderElement(element) {
+  const text = (element.textContent || '').replace(/\s+/g, ' ').trim().toUpperCase();
+  return text === 'AC' ||
+    element.classList.contains('label-success') ||
+    element.classList.contains('status-AC');
+}
 
 function captureAtCoderCode() {
   const textarea = document.querySelector('textarea#sourceCode, textarea[name="sourceCode"], textarea[name="source"]');
@@ -29,66 +36,96 @@ function hookAtCoderSubmit() {
   });
 }
 
-function processAtCoderSubmission() {
-  const acSpan = document.querySelector('span.label-success, td span.label.label-success');
-  if (!acSpan || acSpan.textContent.trim() !== 'AC') return;
+async function fetchAtCoderSubmission(detailUrl) {
+  try {
+    const response = await fetch(detailUrl, { credentials: 'include' });
+    if (!response.ok) return { code: '', language: '' };
 
-  if (acSpan.dataset.cpSynced === 'true') return;
-  acSpan.dataset.cpSynced = 'true';
+    const html = await response.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const codeElement = doc.querySelector('#submission-code, pre.linenums, pre');
+    const languageElement = Array.from(doc.querySelectorAll('th')).find((header) =>
+      header.textContent.trim().toLowerCase() === 'language'
+    )?.nextElementSibling;
 
-  const pathParts = window.location.pathname.split('/').filter(Boolean);
-  let contestId = 'atcoder';
-  let problemId = 'problem';
-
-  if (pathParts.includes('contests')) contestId = pathParts[pathParts.indexOf('contests') + 1];
-  if (pathParts.includes('tasks')) problemId = pathParts[pathParts.indexOf('tasks') + 1];
-  else problemId = contestId;
-
-  const dedupeKey = `AC_${contestId}_${problemId}_${Math.floor(Date.now() / 60000)}`;
-  if (processedACKeys.has(dedupeKey)) return;
-  processedACKeys.add(dedupeKey);
-
-  const codePre = document.querySelector('#submission-code') || document.querySelector('pre.linenums') || document.querySelector('pre');
-  const code = pendingAtCoderCode || (codePre ? codePre.textContent : '');
-
-  let language = pendingAtCoderLanguage || 'cpp';
-  document.querySelectorAll('th').forEach((th) => {
-    if (th.textContent.includes('Language')) {
-      const td = th.nextElementSibling;
-      if (td) language = td.textContent.trim().toLowerCase();
-    }
-  });
-
-  console.log(`[CP-Sync] AtCoder AC: ${contestId}/${problemId} — forwarding to background...`);
-
-  chrome.runtime.sendMessage({
-    type: 'SYNC_SOLUTION',
-    payload: {
-      platform: 'AtCoder',
-      problemId,
-      problemTitle: `${contestId.toUpperCase()} - ${problemId.toUpperCase()}`,
-      language,
-      code,
-      filePath: `AtCoder/${contestId}/${problemId}.${getExt(language)}`,
-    },
-  }, (response) => {
-    if (response?.success) {
-      console.log('[CP-Sync] AtCoder solution synced to GitHub successfully.');
-    } else {
-      console.warn('[CP-Sync] AtCoder sync error:', response?.error);
-    }
-  });
-
-  pendingAtCoderCode = '';
+    return {
+      code: codeElement?.textContent?.trim() || '',
+      language: languageElement?.textContent?.trim() || '',
+    };
+  } catch (error) {
+    console.warn('[CP-Sync] Could not fetch AtCoder submission detail:', error.message);
+    return { code: '', language: '' };
+  }
 }
 
-function getExt(lang) {
-  if (lang.includes('c++') || lang.includes('gcc') || lang.includes('clang')) return 'cpp';
-  if (lang.includes('java')) return 'java';
-  if (lang.includes('py') || lang.includes('python')) return 'py';
-  if (lang.includes('javascript') || lang.includes('node')) return 'js';
-  if (lang.includes('go')) return 'go';
-  if (lang.includes('rust')) return 'rs';
+async function processAtCoderSubmission() {
+  const rows = Array.from(document.querySelectorAll('table tbody tr, table tr')).filter((row) =>
+    Array.from(row.querySelectorAll('span, td, a')).some(isAcceptedAtCoderElement)
+  );
+
+  for (const row of rows) {
+    const acElement = Array.from(row.querySelectorAll('span, td')).find(isAcceptedAtCoderElement);
+    if (!acElement || acElement.dataset.cpSynced === 'true') continue;
+    acElement.dataset.cpSynced = 'true';
+
+    const pathParts = window.location.pathname.split('/').filter(Boolean);
+    const contestIndex = pathParts.indexOf('contests');
+    const contestId = contestIndex >= 0 ? pathParts[contestIndex + 1] : 'atcoder';
+    const taskLink = row.querySelector('td a[href*="/tasks/"]');
+    const taskPath = taskLink?.getAttribute('href')?.split('/').filter(Boolean);
+    const problemId = taskPath?.length ? taskPath[taskPath.length - 1] : 'problem';
+    const detailLink = Array.from(row.querySelectorAll('a')).find((link) =>
+      /detail/i.test(link.textContent || '')
+    );
+    const detailUrl = detailLink?.href || '';
+    const dedupeKey = `AC_${detailUrl || `${contestId}_${problemId}`}`;
+    if (processedACKeys.has(dedupeKey)) continue;
+    processedACKeys.add(dedupeKey);
+
+    let code = pendingAtCoderCode;
+    let language = pendingAtCoderLanguage || 'cpp';
+    if (!code && detailUrl) {
+      const detail = await fetchAtCoderSubmission(detailUrl);
+      code = detail.code;
+      language = detail.language || language;
+    }
+
+    if (!code) {
+      console.warn('[CP-Sync] AtCoder AC detected, but submission source could not be found.');
+      continue;
+    }
+
+    console.log(`[CP-Sync] AtCoder AC: ${contestId}/${problemId} — forwarding to background...`);
+    chrome.runtime.sendMessage({
+      type: 'SYNC_SOLUTION',
+      payload: {
+        platform: 'AtCoder',
+        problemId,
+        problemTitle: `${contestId.toUpperCase()} - ${problemId.toUpperCase()}`,
+        language,
+        code,
+        filePath: `AtCoder/${contestId}/${problemId}.${getExt(language)}`,
+      },
+    }, (response) => {
+      if (response?.success) {
+        console.log('[CP-Sync] AtCoder solution synced to GitHub successfully.');
+      } else {
+        console.warn('[CP-Sync] AtCoder sync error:', response?.error);
+      }
+    });
+
+    pendingAtCoderCode = '';
+  }
+}
+
+function getExt(language) {
+  const normalized = language.toLowerCase();
+  if (normalized.includes('c++') || normalized.includes('gcc') || normalized.includes('clang')) return 'cpp';
+  if (normalized.includes('java')) return 'java';
+  if (normalized.includes('py') || normalized.includes('python')) return 'py';
+  if (normalized.includes('javascript') || normalized.includes('node')) return 'js';
+  if (normalized.includes('go')) return 'go';
+  if (normalized.includes('rust')) return 'rs';
   return 'cpp';
 }
 
