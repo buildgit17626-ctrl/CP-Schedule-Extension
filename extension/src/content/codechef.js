@@ -29,8 +29,11 @@ function isAcceptedText(text) {
   return normalized === 'ac' ||
     normalized === 'accepted' ||
     normalized === 'correct answer' ||
+    normalized === 'correct' ||
+    normalized === 'hooray, you did it!' ||
     normalized === 'success' ||
-    normalized === 'solved';
+    normalized === 'solved' ||
+    /^correct \([^)]*\)$/.test(normalized);
 }
 
 function findAcceptedElement() {
@@ -45,7 +48,10 @@ function findAcceptedElement() {
 
   return Array.from(document.querySelectorAll('td, span, div, p, strong')).find((element) => {
     if (element.children.length > 0 && element.textContent.trim().length > 30) return false;
-    return isAcceptedText(element.textContent || '') || isAcceptedText(element.getAttribute('aria-label') || '');
+    const text = element.textContent || '';
+    const ariaLabel = element.getAttribute('aria-label') || '';
+    return isAcceptedText(text) || isAcceptedText(ariaLabel) ||
+      /result\s*-\s*correct/i.test(text);
   });
 }
 
