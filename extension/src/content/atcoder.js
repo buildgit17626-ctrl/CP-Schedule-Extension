@@ -59,9 +59,10 @@ async function fetchAtCoderSubmission(detailUrl) {
 }
 
 async function processAtCoderSubmission() {
-  const rows = Array.from(document.querySelectorAll('table tbody tr, table tr')).filter((row) =>
+  const acceptedRows = Array.from(document.querySelectorAll('table tbody tr, table tr')).filter((row) =>
     Array.from(row.querySelectorAll('span, td, a')).some(isAcceptedAtCoderElement)
   );
+  const rows = acceptedRows.slice(0, 1);
 
   for (const row of rows) {
     const acElement = Array.from(row.querySelectorAll('span, td')).find(isAcceptedAtCoderElement);
