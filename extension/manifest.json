@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CP Schedule & Git-Sync Ecosystem",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Competitive Programming contest scheduler with multi-platform Google Calendar sync & GitHub solution backup for Codeforces, LeetCode, AtCoder, and CodeChef.",
   "permissions": [
     "storage",
@@ -16,6 +16,7 @@
     "*://*.atcoder.jp/*",
     "*://*.codechef.com/*",
     "http://localhost:5000/*",
+    "https://cp-schedule-extension.onrender.com/*",
     "https://www.googleapis.com/*"
   ],
   "oauth2": {
