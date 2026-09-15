@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "CP Schedule & Git-Sync Ecosystem",
+  "version": "1.2.0",
+  "description": "Competitive Programming contest scheduler with multi-platform Google Calendar sync & GitHub solution backup for Codeforces, LeetCode, AtCoder, and CodeChef.",
+  "permissions": [
+    "storage",
+    "notifications",
+    "activeTab",
+    "identity",
+    "alarms"
+  ],
+  "host_permissions": [
+    "*://*.leetcode.com/*",
+    "*://*.codeforces.com/*",
+    "*://*.atcoder.jp/*",
+    "*://*.codechef.com/*",
+    "http://localhost:5000/*",
+    "https://www.googleapis.com/*"
+  ],
+  "oauth2": {
+    "client_id": "1032167134786-3blueeern6smt9bdoap2lhm1mujrl24k.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/calendar.events"
+    ]
+  },
+  "action": {
+    "default_popup": "index.html",
+    "default_title": "CP Contests & Git Sync"
+  },
+  "background": {
+    "service_worker": "src/background/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.leetcode.com/*"],
+      "js": ["src/content/leetcode.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://*.codeforces.com/*"],
+      "js": ["src/content/codeforces.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://*.atcoder.jp/*"],
+      "js": ["src/content/atcoder.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://*.codechef.com/*"],
+      "js": ["src/content/codechef.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
