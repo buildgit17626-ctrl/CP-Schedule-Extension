@@ -8,11 +8,45 @@ let pendingCodeChefCode = '';
 let pendingCodeChefLanguage = 'cpp';
 
 function captureCodeChefCode() {
+  try {
+    const models = window.monaco?.editor?.getModels?.();
+    if (models?.length) return models[0].getValue();
+  } catch (_) {}
+
+  try {
+    if (window.ace) return window.ace.edit('editor').getValue();
+  } catch (_) {}
+
   const textarea = document.querySelector('textarea#sourceCode, textarea[name="source"], textarea.ace_text-input');
   if (textarea?.value) return textarea.value;
 
   const editorLines = document.querySelectorAll('.CodeMirror-line, .monaco-editor .view-line, #editor .view-line');
   return Array.from(editorLines).map((line) => line.textContent).join('\n');
+}
+
+function isAcceptedText(text) {
+  const normalized = text.replace(/\s+/g, ' ').trim().toLowerCase();
+  return normalized === 'ac' ||
+    normalized === 'accepted' ||
+    normalized === 'correct answer' ||
+    normalized === 'success' ||
+    normalized === 'solved';
+}
+
+function findAcceptedElement() {
+  const statusElement = document.querySelector(
+    '[data-status="AC"], [data-status="accepted"], [aria-label="Accepted"], ' +
+    '.status-AC, .status-ac, .status-accepted, .text-success, .text-green'
+  );
+
+  if (statusElement && isAcceptedText(statusElement.textContent || statusElement.getAttribute('aria-label') || '')) {
+    return statusElement;
+  }
+
+  return Array.from(document.querySelectorAll('td, span, div, p, strong')).find((element) => {
+    if (element.children.length > 0 && element.textContent.trim().length > 30) return false;
+    return isAcceptedText(element.textContent || '') || isAcceptedText(element.getAttribute('aria-label') || '');
+  });
 }
 
 function hookCodeChefSubmit() {
@@ -31,12 +65,7 @@ function hookCodeChefSubmit() {
 }
 
 function processCodeChefSubmission() {
-  const acEl =
-    document.querySelector('span.correct') ||
-    document.querySelector('.status-AC') ||
-    Array.from(document.querySelectorAll('td, span, div')).find(
-      (el) => el.textContent.trim() === 'AC' || el.textContent.trim() === 'Correct Answer'
-    );
+  const acEl = findAcceptedElement();
 
   if (!acEl) return;
   if (acEl.dataset.cpSynced === 'true') return;
