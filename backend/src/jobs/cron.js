@@ -15,7 +15,7 @@ export async function syncAllContests() {
   console.log('[Cron Job] Starting contest fetch across all platforms (Codeforces, LeetCode, CodeChef, Kattis, Unstop, HackerCup, Google)...');
 
   try {
-    const [cfContests, lcContests, ccContests, universalContests, unstopContests, kattisContests] = await Promise.all([
+    const results = await Promise.allSettled([
       fetchCodeforcesContests(),
       fetchLeetCodeContests(),
       fetchCodeChefContests(),
@@ -23,6 +23,12 @@ export async function syncAllContests() {
       fetchUnstopContests(),
       fetchKattisContests(),
     ]);
+
+    const [cfContests, lcContests, ccContests, universalContests, unstopContests, kattisContests] = results.map((result, index) => {
+      if (result.status === 'fulfilled') return result.value;
+      console.warn(`[Cron Job] Contest source ${index + 1} failed:`, result.reason?.message || result.reason);
+      return [];
+    });
 
     const rawList = [
       ...cfContests,
@@ -45,6 +51,11 @@ export async function syncAllContests() {
 
     const allContests = Array.from(uniqueMap.values());
     console.log(`[Cron Job] Fetched ${allContests.length} total active/upcoming contests across all platforms.`);
+
+    if (allContests.length === 0) {
+      console.warn('[Cron Job] All contest sources returned no data; preserving the existing schedule.');
+      return;
+    }
 
     const isDbConnected = mongoose.connection.readyState === 1;
 
