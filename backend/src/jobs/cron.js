@@ -33,7 +33,6 @@ export async function syncAllContests() {
     const rawList = [
       ...cfContests,
       ...lcContests,
-      ...acContests,
       ...ccContests,
       ...universalContests,
       ...unstopContests,
