@@ -47,6 +47,25 @@ export async function syncAllContests() {
 
     const isDbConnected = mongoose.connection.readyState === 1;
 
+    const obsoleteAtCoderTitle = /practice|weekday|daily|training|selection|guide for beginners/i;
+    const isObsoleteAtCoder = (contest) =>
+      contest.platform === 'AtCoder' &&
+      (obsoleteAtCoderTitle.test(contest.title) || new Date(contest.startTime).getTime() < 946684800000);
+
+    for (const [cacheKey, contest] of inMemoryContests) {
+      if (isObsoleteAtCoder(contest)) inMemoryContests.delete(cacheKey);
+    }
+
+    if (isDbConnected) {
+      await Contest.deleteMany({
+        platform: 'AtCoder',
+        $or: [
+          { title: { $regex: obsoleteAtCoderTitle } },
+          { startTime: { $lt: new Date('2000-01-01T00:00:00.000Z') } },
+        ],
+      });
+    }
+
     // Remove AtCoder records from older scraper runs that are no longer valid main contests.
     // Do not prune when the source returned nothing, since that could be a temporary outage.
     if (acContests.length > 0) {
