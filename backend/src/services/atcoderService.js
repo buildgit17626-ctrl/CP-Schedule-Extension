@@ -2,6 +2,34 @@ import axios from 'axios';
 
 import * as cheerio from 'cheerio';
 
+async function fetchAtCoderFromProblems() {
+  const response = await axios.get('https://kenkoooo.com/atcoder/resources/contests.json', {
+    timeout: 12000,
+  });
+  if (!Array.isArray(response.data)) return [];
+
+  const now = Date.now();
+  return response.data
+    .map((item) => {
+      const startTime = new Date(item.start_epoch_second * 1000);
+      const endTime = new Date((item.start_epoch_second + item.duration_second) * 1000);
+      if (!item.id || !item.title || isNaN(startTime.getTime()) || isNaN(endTime.getTime())) return null;
+      if (endTime.getTime() < now) return null;
+
+      return {
+        contestId: `ac-${item.id}`,
+        platform: 'AtCoder',
+        title: item.title,
+        url: `https://atcoder.jp/contests/${item.id}`,
+        startTime,
+        endTime,
+        durationSeconds: Math.max(0, Number(item.duration_second) || 0),
+        status: startTime.getTime() <= now ? 'CODING' : 'BEFORE',
+      };
+    })
+    .filter(Boolean);
+}
+
 function toAtCoderContest(item) {
   const startTime = new Date(item.startTime);
   const endTime = new Date(item.endTime);
@@ -118,11 +146,20 @@ export async function fetchAtCoderContests() {
 
     if (contests.length > 0) return contests;
 
+    try {
+      const contestsFromProblems = await fetchAtCoderFromProblems();
+      if (contestsFromProblems.length > 0) return contestsFromProblems;
+    } catch (fallbackError) {
+      console.warn('[AtCoder Service] AtCoder Problems fallback warning:', fallbackError.message);
+    }
+
     console.warn('[AtCoder Service] Official contest page returned no contests; trying Kontests.net.');
     return await fetchAtCoderFromKontests();
   } catch (error) {
-    console.warn('[AtCoder Service] Official page failed; trying Kontests.net:', error.message);
+    console.warn('[AtCoder Service] Official page failed; trying AtCoder Problems and Kontests.net:', error.message);
     try {
+      const contestsFromProblems = await fetchAtCoderFromProblems();
+      if (contestsFromProblems.length > 0) return contestsFromProblems;
       return await fetchAtCoderFromKontests();
     } catch (fallbackError) {
       console.error('[AtCoder Service] Kontests fallback failed:', fallbackError.message);

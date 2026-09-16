@@ -1,7 +1,22 @@
 import axios from 'axios';
 
 const UNSTOP_API_URL = 'https://unstop.com/api/public/opportunity/search-result';
-const UNSTOP_TYPES = ['competitions', 'hackathons'];
+const CP_KEYWORDS = /competitive programming|programming contest|coding contest|coding[ _-]?challenge|algorithm|data structure|codeforces|leetcode|atcoder|codechef|icpc|ioi|hackerrank|\bdsa\b/i;
+const UNSTOP_PAGES_TO_SCAN = 5;
+
+function isCpCompetition(item) {
+  if (!['competitions', 'hackathons'].includes(item.type)) return false;
+
+  const searchableText = [
+    item.title,
+    item.subtype,
+    item.details,
+    ...(item.filters || []).map((filter) => filter.name),
+    ...(item.workfunction || []).map((work) => work.name),
+  ].join(' ');
+
+  return CP_KEYWORDS.test(searchableText);
+}
 
 function mapUnstopOpportunity(item) {
   const startTime = new Date(item.regnRequirements?.start_regn_dt || item.created_at);
@@ -31,28 +46,32 @@ function mapUnstopOpportunity(item) {
 }
 
 async function fetchUnstopType(type) {
-  const response = await axios.get(UNSTOP_API_URL, {
-    timeout: 12000,
-    headers: {
-      Accept: 'application/json',
-      'User-Agent': 'CP-Schedule-Extension/1.0',
-    },
-    params: {
-      opportunity: type,
-      opportunity_type: type,
-      page: 1,
-      per_page: 50,
-    },
-  });
+  const pages = await Promise.all(
+    Array.from({ length: UNSTOP_PAGES_TO_SCAN }, (_, index) => axios.get(UNSTOP_API_URL, {
+      timeout: 12000,
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'CP-Schedule-Extension/1.0',
+      },
+      params: {
+        opportunity: type,
+        opportunity_type: type,
+        page: index + 1,
+        per_page: 50,
+      },
+    }))
+  );
 
-  const items = response.data?.data?.data;
-  if (!Array.isArray(items)) return [];
-  return items.map(mapUnstopOpportunity).filter(Boolean);
+  return pages
+    .flatMap((response) => response.data?.data?.data || [])
+    .filter(isCpCompetition)
+    .map(mapUnstopOpportunity)
+    .filter(Boolean);
 }
 
 export async function fetchUnstopContests() {
   try {
-    const results = await Promise.all(UNSTOP_TYPES.map(fetchUnstopType));
+    const results = await Promise.all([fetchUnstopType('competitions')]);
     const seen = new Set();
     const contests = results.flat().filter((contest) => {
       if (seen.has(contest.contestId)) return false;
@@ -60,7 +79,7 @@ export async function fetchUnstopContests() {
       return true;
     });
 
-    console.log(`[Unstop Service] Loaded ${contests.length} active/upcoming competitions and hackathons.`);
+    console.log(`[Unstop Service] Loaded ${contests.length} active/upcoming CP competitions and coding challenges.`);
     return contests;
   } catch (error) {
     console.warn('[Unstop Service] API warning:', error.message);
