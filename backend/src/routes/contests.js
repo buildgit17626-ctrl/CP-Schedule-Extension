@@ -66,8 +66,8 @@ router.get('/contests', async (req, res) => {
  */
 router.post('/contests/sync', async (req, res) => {
   try {
-    await syncAllContests();
-    res.json({ success: true, message: 'Sync triggered successfully' });
+    const result = await syncAllContests();
+    res.json({ success: true, message: 'Sync triggered successfully', ...result });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

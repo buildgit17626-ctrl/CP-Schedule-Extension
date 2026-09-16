@@ -54,7 +54,17 @@ export async function syncAllContests() {
 
     if (allContests.length === 0) {
       console.warn('[Cron Job] All contest sources returned no data; preserving the existing schedule.');
-      return;
+      return {
+        count: 0,
+        sources: {
+          codeforces: cfContests.length,
+          leetcode: lcContests.length,
+          codechef: ccContests.length,
+          universal: universalContests.length,
+          unstop: unstopContests.length,
+          kattis: kattisContests.length,
+        },
+      };
     }
 
     const isDbConnected = mongoose.connection.readyState === 1;
@@ -80,8 +90,20 @@ export async function syncAllContests() {
     }
 
     console.log('[Cron Job] Sync complete successfully.');
+    return {
+      count: allContests.length,
+      sources: {
+        codeforces: cfContests.length,
+        leetcode: lcContests.length,
+        codechef: ccContests.length,
+        universal: universalContests.length,
+        unstop: unstopContests.length,
+        kattis: kattisContests.length,
+      },
+    };
   } catch (error) {
     console.error('[Cron Job] Error during contest sync:', error.message);
+    throw error;
   }
 }
 
