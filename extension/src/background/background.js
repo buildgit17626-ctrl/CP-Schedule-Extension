@@ -1,15 +1,33 @@
 // Background Service Worker for Manifest V3 extension
 
-// Set up recurring alarm on installation
+const PERIODIC_SYNC_ALARM = 'periodicContestSync';
+
+async function ensurePeriodicSyncAlarm() {
+  const existingAlarm = await chrome.alarms.get(PERIODIC_SYNC_ALARM);
+  if (!existingAlarm) {
+    await chrome.alarms.create(PERIODIC_SYNC_ALARM, { periodInMinutes: 30 });
+    console.log('[CP-Sync Background] Created 30-minute contest sync alarm.');
+  }
+}
+
+// Recreate the alarm for existing installations as well as fresh installs.
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('[CP-Sync Background] Extension installed. Extension ID:', chrome.runtime.id);
-  chrome.alarms.create('periodicContestSync', { periodInMinutes: 30 });
-  triggerAutomaticCalendarSync();
+  console.log('[CP-Sync Background] Extension installed or updated. Extension ID:', chrome.runtime.id);
+  ensurePeriodicSyncAlarm();
+  triggerAutomaticCalendarSync().catch((error) => {
+    console.warn('[CP-Sync Background] Initial calendar sync skipped:', error.message);
+  });
 });
+
+chrome.runtime.onStartup.addListener(() => {
+  ensurePeriodicSyncAlarm();
+});
+
+ensurePeriodicSyncAlarm();
 
 // Alarm event listener
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'periodicContestSync') {
+  if (alarm.name === PERIODIC_SYNC_ALARM) {
     console.log('[CP-Sync Background] 30-minute alarm triggered. Running automatic calendar sync...');
     triggerAutomaticCalendarSync();
   }
@@ -38,6 +56,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .then((token) => {
         if (token) {
           sendResponse({ success: true, token });
+          triggerAutomaticCalendarSync().catch((error) => {
+            console.warn('[CP-Sync Background] Automatic sync after Google connection failed:', error.message);
+          });
         } else {
           sendResponse({
             success: false,
@@ -71,7 +92,7 @@ async function clearAndAuthenticateGoogleOAuth() {
 export async function triggerAutomaticCalendarSync() {
   try {
     const config = await getStoredConfig();
-    const backendUrl = config.backendUrl || 'https://cp-schedule-extension.onrender.com';
+    const backendUrl = (config.backendUrl || 'https://cp-schedule-extension.onrender.com').replace(/\/+$/, '');
     const autoGCalSync = config.autoGCalSync ?? true;
 
     if (!autoGCalSync) {
@@ -95,8 +116,7 @@ export async function triggerAutomaticCalendarSync() {
     // 2. Get Google OAuth Token (silent interactive: false first)
     const token = await authenticateGoogleOAuth(false);
     if (!token) {
-      console.warn('[CP-Sync Background] Google Calendar OAuth token not available. User needs to authenticate in Settings.');
-      return 0;
+      throw new Error('Google Calendar is not connected. Open Settings and click Connect Google Account.');
     }
 
     // 3. Read already synced contest IDs from storage
@@ -137,9 +157,24 @@ export async function triggerAutomaticCalendarSync() {
 /**
  * Injects a single contest event into the user's primary Google Calendar via Google Calendar API v3.
  */
+function getMorningReminderMinutes(startDate) {
+  const morning = new Date(
+    startDate.getFullYear(),
+    startDate.getMonth(),
+    startDate.getDate(),
+    9,
+    0,
+    0,
+    0
+  );
+
+  return Math.max(0, Math.round((startDate.getTime() - morning.getTime()) / 60000));
+}
+
 async function injectEventIntoGoogleCalendar(token, contest) {
   const startDate = new Date(contest.startTime);
   const endDate = new Date(contest.endTime);
+  const morningReminderMinutes = getMorningReminderMinutes(startDate);
 
   const eventPayload = {
     summary: `[${contest.platform.toUpperCase()}] ${contest.title}`,
@@ -155,10 +190,7 @@ async function injectEventIntoGoogleCalendar(token, contest) {
     },
     reminders: {
       useDefault: false,
-      overrides: [
-        { method: 'popup', minutes: 30 },
-        { method: 'email', minutes: 60 },
-      ],
+      overrides: [{ method: 'popup', minutes: morningReminderMinutes }],
     },
   };
 
@@ -262,7 +294,7 @@ async function authenticateGoogleOAuth(interactive = false) {
  */
 async function handleSolutionSync(payload) {
   const config = await getStoredConfig();
-  const backendUrl = config.backendUrl || 'https://cp-schedule-extension.onrender.com';
+  const backendUrl = (config.backendUrl || 'https://cp-schedule-extension.onrender.com').replace(/\/+$/, '');
   const token = config.githubToken;
   const owner = config.githubOwner;
   const repo = config.githubRepo;

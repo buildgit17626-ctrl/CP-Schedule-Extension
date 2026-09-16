@@ -19,11 +19,11 @@ export default function App() {
           setBackendUrl(res.backendUrl);
           fetchContests(res.backendUrl);
         } else {
-          fetchContests('http://localhost:5000');
+          fetchContests('https://cp-schedule-extension.onrender.com');
         }
       });
     } else {
-      fetchContests('http://localhost:5000');
+      fetchContests('https://cp-schedule-extension.onrender.com');
     }
   }, []);
 
@@ -99,7 +99,7 @@ export default function App() {
           {/* Controls bar */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1 bg-slate-800/70 p-1 rounded-lg border border-slate-800 text-xs overflow-x-auto max-w-[320px] scrollbar-none">
-              {['ALL', 'Codeforces', 'LeetCode', 'AtCoder', 'CodeChef', 'HackerCup'].map((pf) => (
+              {['ALL', 'Codeforces', 'LeetCode', 'AtCoder', 'CodeChef', 'HackerCup', 'Meta', 'Google'].map((pf) => (
                 <button
                   key={pf}
                   onClick={() => setSelectedPlatform(pf)}
@@ -166,7 +166,7 @@ export default function App() {
 
       {/* Footer status bar */}
       <footer className="mt-auto pt-3 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-500">
-        <span>CP-Sync Ecosystem v1.2.0</span>
+        <span>CP-Sync Ecosystem v1.2.2</span>
         <span className="flex items-center gap-1 text-emerald-500 font-medium">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
           Git-Sync Active

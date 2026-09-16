@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CP Schedule & Git-Sync Ecosystem",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Competitive Programming contest scheduler with multi-platform Google Calendar sync & GitHub solution backup for Codeforces, LeetCode, AtCoder, and CodeChef.",
   "permissions": [
     "storage",
