@@ -99,7 +99,7 @@ export default function App() {
           {/* Controls bar */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1 bg-slate-800/70 p-1 rounded-lg border border-slate-800 text-xs overflow-x-auto max-w-[320px] scrollbar-none">
-              {['ALL', 'Codeforces', 'LeetCode', 'AtCoder', 'CodeChef', 'HackerCup', 'Meta', 'Google'].map((pf) => (
+              {['ALL', 'Codeforces', 'LeetCode', 'AtCoder', 'CodeChef', 'Unstop', 'HackerCup', 'Meta', 'Google'].map((pf) => (
                 <button
                   key={pf}
                   onClick={() => setSelectedPlatform(pf)}

@@ -6,20 +6,22 @@ import { fetchLeetCodeContests } from '../services/leetcodeService.js';
 import { fetchAtCoderContests } from '../services/atcoderService.js';
 import { fetchCodeChefContests } from '../services/codechefService.js';
 import { fetchUniversalCpContests } from '../services/universalCpService.js';
+import { fetchUnstopContests } from '../services/unstopService.js';
 
 // In-memory fallback cache when MongoDB is disconnected/offline
 export const inMemoryContests = new Map();
 
 export async function syncAllContests() {
-  console.log('[Cron Job] Starting contest fetch across all platforms (Codeforces, LeetCode, AtCoder, CodeChef, HackerCup, Google)...');
+  console.log('[Cron Job] Starting contest fetch across all platforms (Codeforces, LeetCode, AtCoder, CodeChef, Unstop, HackerCup, Google)...');
 
   try {
-    const [cfContests, lcContests, acContests, ccContests, universalContests] = await Promise.all([
+    const [cfContests, lcContests, acContests, ccContests, universalContests, unstopContests] = await Promise.all([
       fetchCodeforcesContests(),
       fetchLeetCodeContests(),
       fetchAtCoderContests(),
       fetchCodeChefContests(),
       fetchUniversalCpContests(),
+      fetchUnstopContests(),
     ]);
 
     const rawList = [
@@ -28,6 +30,7 @@ export async function syncAllContests() {
       ...acContests,
       ...ccContests,
       ...universalContests,
+      ...unstopContests,
     ];
 
     // Deduplicate by platform + title
