@@ -47,6 +47,24 @@ export async function syncAllContests() {
 
     const isDbConnected = mongoose.connection.readyState === 1;
 
+    // Remove AtCoder records from older scraper runs that are no longer valid main contests.
+    // Do not prune when the source returned nothing, since that could be a temporary outage.
+    if (acContests.length > 0) {
+      const currentAtCoderIds = new Set(acContests.map((contest) => contest.contestId));
+      for (const [cacheKey, contest] of inMemoryContests) {
+        if (contest.platform === 'AtCoder' && !currentAtCoderIds.has(contest.contestId)) {
+          inMemoryContests.delete(cacheKey);
+        }
+      }
+
+      if (isDbConnected) {
+        await Contest.deleteMany({
+          platform: 'AtCoder',
+          contestId: { $nin: Array.from(currentAtCoderIds) },
+        });
+      }
+    }
+
     for (const contest of allContests) {
       if (isDbConnected) {
         await Contest.findOneAndUpdate(
