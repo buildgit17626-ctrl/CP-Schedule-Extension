@@ -55,6 +55,8 @@ export default function App() {
   });
   const visibleContests = activeTab === 'unstop'
     ? contests.filter((contest) => contest.platform === 'Unstop')
+    : activeTab === 'kattis'
+      ? contests.filter((contest) => contest.platform === 'Kattis')
     : filteredContests;
 
   return (
@@ -93,6 +95,16 @@ export default function App() {
             Unstop
           </button>
           <button
+            onClick={() => setActiveTab('kattis')}
+            className={`px-2.5 py-1 text-xs font-medium rounded-md transition ${
+              activeTab === 'kattis'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Kattis
+          </button>
+          <button
             onClick={() => setActiveTab('settings')}
             className={`px-2 py-1 text-xs font-medium rounded-md transition flex items-center gap-1 ${
               activeTab === 'settings'
@@ -107,15 +119,18 @@ export default function App() {
       </header>
 
       {/* Tab: Contests */}
-      {(activeTab === 'contests' || activeTab === 'unstop') && (
+      {(activeTab === 'contests' || activeTab === 'unstop' || activeTab === 'kattis') && (
         <div className="flex-1 flex flex-col space-y-3">
           {activeTab === 'unstop' && (
             <div className="text-xs text-slate-400">Competitive programming contests from Unstop</div>
           )}
+          {activeTab === 'kattis' && (
+            <div className="text-xs text-slate-400">Open Kattis contests</div>
+          )}
           {/* Controls bar */}
           {activeTab === 'contests' && <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1 bg-slate-800/70 p-1 rounded-lg border border-slate-800 text-xs overflow-x-auto max-w-[320px] scrollbar-none">
-              {['ALL', 'Codeforces', 'LeetCode', 'AtCoder', 'CodeChef', 'HackerCup', 'Meta', 'Google'].map((pf) => (
+              {['ALL', 'Codeforces', 'LeetCode', 'CodeChef', 'HackerCup', 'Meta', 'Google'].map((pf) => (
                 <button
                   key={pf}
                   onClick={() => setSelectedPlatform(pf)}
@@ -166,7 +181,7 @@ export default function App() {
               </div>
             ) : visibleContests.length === 0 ? (
               <div className="text-center py-10 text-xs text-slate-500 bg-slate-800/40 rounded-xl border border-slate-800">
-                No upcoming contests found for {activeTab === 'unstop' ? 'Unstop' : selectedPlatform}.
+                No upcoming contests found for {activeTab === 'unstop' ? 'Unstop' : activeTab === 'kattis' ? 'Kattis' : selectedPlatform}.
               </div>
             ) : (
               visibleContests.map((contest) => (

@@ -3,25 +3,25 @@ import mongoose from 'mongoose';
 import { Contest } from '../models/Contest.js';
 import { fetchCodeforcesContests } from '../services/codeforcesService.js';
 import { fetchLeetCodeContests } from '../services/leetcodeService.js';
-import { fetchAtCoderContests } from '../services/atcoderService.js';
 import { fetchCodeChefContests } from '../services/codechefService.js';
 import { fetchUniversalCpContests } from '../services/universalCpService.js';
 import { fetchUnstopContests } from '../services/unstopService.js';
+import { fetchKattisContests } from '../services/kattisService.js';
 
 // In-memory fallback cache when MongoDB is disconnected/offline
 export const inMemoryContests = new Map();
 
 export async function syncAllContests() {
-  console.log('[Cron Job] Starting contest fetch across all platforms (Codeforces, LeetCode, AtCoder, CodeChef, Unstop, HackerCup, Google)...');
+  console.log('[Cron Job] Starting contest fetch across all platforms (Codeforces, LeetCode, CodeChef, Kattis, Unstop, HackerCup, Google)...');
 
   try {
-    const [cfContests, lcContests, acContests, ccContests, universalContests, unstopContests] = await Promise.all([
+    const [cfContests, lcContests, ccContests, universalContests, unstopContests, kattisContests] = await Promise.all([
       fetchCodeforcesContests(),
       fetchLeetCodeContests(),
-      fetchAtCoderContests(),
       fetchCodeChefContests(),
       fetchUniversalCpContests(),
       fetchUnstopContests(),
+      fetchKattisContests(),
     ]);
 
     const rawList = [
@@ -31,6 +31,7 @@ export async function syncAllContests() {
       ...ccContests,
       ...universalContests,
       ...unstopContests,
+      ...kattisContests,
     ];
 
     // Deduplicate by platform + title
@@ -47,41 +48,12 @@ export async function syncAllContests() {
 
     const isDbConnected = mongoose.connection.readyState === 1;
 
-    const obsoleteAtCoderTitle = /practice|weekday|daily|training|selection|guide for beginners/i;
-    const isObsoleteAtCoder = (contest) =>
-      contest.platform === 'AtCoder' &&
-      (obsoleteAtCoderTitle.test(contest.title) || new Date(contest.startTime).getTime() < 946684800000);
-
     for (const [cacheKey, contest] of inMemoryContests) {
-      if (isObsoleteAtCoder(contest)) inMemoryContests.delete(cacheKey);
+      if (contest.platform === 'AtCoder') inMemoryContests.delete(cacheKey);
     }
 
     if (isDbConnected) {
-      await Contest.deleteMany({
-        platform: 'AtCoder',
-        $or: [
-          { title: { $regex: obsoleteAtCoderTitle } },
-          { startTime: { $lt: new Date('2000-01-01T00:00:00.000Z') } },
-        ],
-      });
-    }
-
-    // Remove AtCoder records from older scraper runs that are no longer valid main contests.
-    // Do not prune when the source returned nothing, since that could be a temporary outage.
-    if (acContests.length > 0) {
-      const currentAtCoderIds = new Set(acContests.map((contest) => contest.contestId));
-      for (const [cacheKey, contest] of inMemoryContests) {
-        if (contest.platform === 'AtCoder' && !currentAtCoderIds.has(contest.contestId)) {
-          inMemoryContests.delete(cacheKey);
-        }
-      }
-
-      if (isDbConnected) {
-        await Contest.deleteMany({
-          platform: 'AtCoder',
-          contestId: { $nin: Array.from(currentAtCoderIds) },
-        });
-      }
+      await Contest.deleteMany({ platform: 'AtCoder' });
     }
 
     for (const contest of allContests) {
