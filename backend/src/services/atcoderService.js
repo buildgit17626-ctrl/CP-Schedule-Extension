@@ -2,6 +2,10 @@ import axios from 'axios';
 
 import * as cheerio from 'cheerio';
 
+function isMainAtCoderContest(title) {
+  return !/practice|weekday|daily|training|selection/i.test(title);
+}
+
 async function fetchAtCoderFromProblems() {
   const response = await axios.get('https://kenkoooo.com/atcoder/resources/contests.json', {
     timeout: 12000,
@@ -13,7 +17,7 @@ async function fetchAtCoderFromProblems() {
     .map((item) => {
       const startTime = new Date(item.start_epoch_second * 1000);
       const endTime = new Date((item.start_epoch_second + item.duration_second) * 1000);
-      if (!item.id || !item.title || isNaN(startTime.getTime()) || isNaN(endTime.getTime())) return null;
+      if (!item.id || !item.title || !isMainAtCoderContest(item.title) || isNaN(startTime.getTime()) || isNaN(endTime.getTime())) return null;
       if (endTime.getTime() < now) return null;
 
       return {
@@ -98,7 +102,7 @@ export async function fetchAtCoderContests() {
       const title = titleAnchor.text().trim();
       const relUrl = titleAnchor.attr('href');
 
-      if (!title || !relUrl) return;
+      if (!title || !relUrl || !isMainAtCoderContest(title)) return;
 
       const fullUrl = relUrl.startsWith('http') ? relUrl : `https://atcoder.jp${relUrl}`;
       const slug = relUrl.split('/').pop();
