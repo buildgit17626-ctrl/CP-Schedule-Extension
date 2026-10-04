@@ -4,7 +4,7 @@ import { Settings } from './components/Settings.jsx';
 import { Calendar, Settings as SettingsIcon, RefreshCw, Code2, AlertTriangle } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('contests'); // 'contests' | 'settings'
+  const [activeTab, setActiveTab] = useState('contests'); // 'contests' | 'unstop' | 'settings'
   const [selectedPlatform, setSelectedPlatform] = useState('ALL');
   const [contests, setContests] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -12,38 +12,53 @@ export default function App() {
   const [backendUrl, setBackendUrl] = useState('http://localhost:5000');
 
   useEffect(() => {
-    // Read backend URL from storage
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
       chrome.storage.sync.get(['backendUrl'], (res) => {
-        if (res.backendUrl) {
-          setBackendUrl(res.backendUrl);
-          fetchContests(res.backendUrl);
-        } else {
-          fetchContests('https://cp-schedule-extension.onrender.com');
-        }
+        const url = res.backendUrl || 'http://localhost:5000';
+        setBackendUrl(url);
+        fetchContestsWithFallback(url);
       });
     } else {
-      fetchContests('https://cp-schedule-extension.onrender.com');
+      fetchContestsWithFallback('http://localhost:5000');
     }
   }, []);
 
-  const fetchContests = async (baseUrl = backendUrl) => {
+  const fetchContestsWithFallback = async (preferredUrl) => {
     setLoading(true);
     setError(null);
-    try {
-      const response = await fetch(`${baseUrl}/api/v1/contests`);
-      if (!response.ok) {
-        throw new Error(`Server returned HTTP ${response.status}`);
-      }
+
+    const tryFetch = async (url) => {
+      const cleanUrl = url.replace(/\/+$/, '');
+      const response = await fetch(`${cleanUrl}/api/v1/contests`, { signal: AbortSignal.timeout(6000) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
-      if (data.success) {
-        setContests(data.data || []);
-      } else {
-        throw new Error(data.error || 'Failed to fetch contests');
+      if (!data.success) throw new Error(data.error || 'API error');
+      return data.data || [];
+    };
+
+    try {
+      // 1. Try configured / preferred URL
+      const data = await tryFetch(preferredUrl);
+      const cleaned = data.filter((c) => c.platform !== 'Kattis');
+      setContests(cleaned);
+      setBackendUrl(preferredUrl);
+    } catch (err1) {
+      console.warn(`Primary backend (${preferredUrl}) unreachable:`, err1.message);
+
+      // 2. Fallback to alternative URL (if local fails -> try Render; if Render fails -> try local)
+      const altUrl = preferredUrl.includes('localhost')
+        ? 'https://cp-schedule-extension.onrender.com'
+        : 'http://localhost:5000';
+
+      try {
+        const altData = await tryFetch(altUrl);
+        const cleanedAlt = altData.filter((c) => c.platform !== 'Kattis');
+        setContests(cleanedAlt);
+        setBackendUrl(altUrl);
+      } catch (err2) {
+        console.error('All backend endpoints unreachable:', err2.message);
+        setError(`Cannot connect to backend server (${preferredUrl} or ${altUrl}). Ensure server is running or active.`);
       }
-    } catch (err) {
-      console.error('Failed to load contests:', err);
-      setError(err.message || 'Cannot connect to Custom Contest Backend API');
     } finally {
       setLoading(false);
     }
@@ -53,10 +68,9 @@ export default function App() {
     if (selectedPlatform === 'ALL') return true;
     return c.platform.toUpperCase() === selectedPlatform.toUpperCase();
   });
+
   const visibleContests = activeTab === 'unstop'
     ? contests.filter((contest) => contest.platform === 'Unstop')
-    : activeTab === 'kattis'
-      ? contests.filter((contest) => contest.platform === 'Kattis')
     : filteredContests;
 
   return (
@@ -95,16 +109,6 @@ export default function App() {
             Unstop
           </button>
           <button
-            onClick={() => setActiveTab('kattis')}
-            className={`px-2.5 py-1 text-xs font-medium rounded-md transition ${
-              activeTab === 'kattis'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Kattis
-          </button>
-          <button
             onClick={() => setActiveTab('settings')}
             className={`px-2 py-1 text-xs font-medium rounded-md transition flex items-center gap-1 ${
               activeTab === 'settings'
@@ -118,42 +122,42 @@ export default function App() {
         </div>
       </header>
 
-      {/* Tab: Contests */}
-      {(activeTab === 'contests' || activeTab === 'unstop' || activeTab === 'kattis') && (
+      {/* Tab: Contests or Unstop */}
+      {(activeTab === 'contests' || activeTab === 'unstop') && (
         <div className="flex-1 flex flex-col space-y-3">
           {activeTab === 'unstop' && (
             <div className="text-xs text-slate-400">Competitive programming contests from Unstop</div>
           )}
-          {activeTab === 'kattis' && (
-            <div className="text-xs text-slate-400">Open Kattis contests</div>
-          )}
-          {/* Controls bar */}
-          {activeTab === 'contests' && <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1 bg-slate-800/70 p-1 rounded-lg border border-slate-800 text-xs overflow-x-auto max-w-[320px] scrollbar-none">
-              {['ALL', 'Codeforces', 'LeetCode', 'CodeChef', 'HackerCup', 'Meta', 'Google'].map((pf) => (
-                <button
-                  key={pf}
-                  onClick={() => setSelectedPlatform(pf)}
-                  className={`px-2 py-0.5 rounded font-medium transition text-[11px] whitespace-nowrap ${
-                    selectedPlatform === pf
-                      ? 'bg-slate-700 text-slate-100 font-semibold'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {pf}
-                </button>
-              ))}
-            </div>
 
-            <button
-              onClick={() => fetchContests()}
-              disabled={loading}
-              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition disabled:opacity-50 shrink-0"
-              title="Refresh Schedule"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-indigo-400' : ''}`} />
-            </button>
-          </div>}
+          {/* Controls bar with Platform Filter Buttons */}
+          {activeTab === 'contests' && (
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1 bg-slate-800/70 p-1 rounded-lg border border-slate-800 text-xs overflow-x-auto max-w-[320px] scrollbar-none">
+                {['ALL', 'Codeforces', 'LeetCode', 'AtCoder', 'CodeChef', 'HackerCup', 'Google'].map((pf) => (
+                  <button
+                    key={pf}
+                    onClick={() => setSelectedPlatform(pf)}
+                    className={`px-2 py-0.5 rounded font-medium transition text-[11px] whitespace-nowrap ${
+                      selectedPlatform === pf
+                        ? 'bg-slate-700 text-slate-100 font-semibold border border-slate-600'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {pf}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                onClick={() => fetchContestsWithFallback(backendUrl)}
+                disabled={loading}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition disabled:opacity-50 shrink-0"
+                title="Refresh Schedule"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-indigo-400' : ''}`} />
+              </button>
+            </div>
+          )}
 
           {/* Error Banner */}
           {error && (
@@ -163,7 +167,7 @@ export default function App() {
                 <p className="font-semibold">Backend Unreachable</p>
                 <p className="text-[11px] text-rose-400/90">{error}</p>
                 <button
-                  onClick={() => fetchContests()}
+                  onClick={() => fetchContestsWithFallback(backendUrl)}
                   className="mt-2 px-2.5 py-1 bg-rose-900/60 hover:bg-rose-800 text-rose-200 rounded font-medium text-[11px] transition"
                 >
                   Retry Connection
@@ -181,7 +185,7 @@ export default function App() {
               </div>
             ) : visibleContests.length === 0 ? (
               <div className="text-center py-10 text-xs text-slate-500 bg-slate-800/40 rounded-xl border border-slate-800">
-                No upcoming contests found for {activeTab === 'unstop' ? 'Unstop' : activeTab === 'kattis' ? 'Kattis' : selectedPlatform}.
+                No upcoming contests found for {activeTab === 'unstop' ? 'Unstop' : selectedPlatform}.
               </div>
             ) : (
               visibleContests.map((contest) => (
@@ -197,7 +201,7 @@ export default function App() {
 
       {/* Footer status bar */}
       <footer className="mt-auto pt-3 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-500">
-        <span>CP-Sync Ecosystem v1.2.2</span>
+        <span>CP-Sync Ecosystem v1.2.4</span>
         <span className="flex items-center gap-1 text-emerald-500 font-medium">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
           Git-Sync Active

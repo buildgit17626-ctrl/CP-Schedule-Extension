@@ -10,7 +10,6 @@ async function ensurePeriodicSyncAlarm() {
   }
 }
 
-// Recreate the alarm for existing installations as well as fresh installs.
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[CP-Sync Background] Extension installed or updated. Extension ID:', chrome.runtime.id);
   ensurePeriodicSyncAlarm();
@@ -41,12 +40,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     handleSolutionSync(request.payload)
       .then((res) => sendResponse({ success: true, data: res }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
-    return true; // Keep async response channel open
+    return true;
   }
 
   if (actionType === 'FORCE_CALENDAR_SYNC' || actionType === 'forceCalendarSync') {
     triggerAutomaticCalendarSync()
       .then((count) => sendResponse({ success: true, syncedCount: count }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  if (actionType === 'PURGE_CALENDAR_EVENTS' || actionType === 'purgeCalendarEvents') {
+    handlePurgeCalendarEvents()
+      .then((count) => sendResponse({ success: true, deletedCount: count }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
   }
@@ -87,6 +93,31 @@ async function clearAndAuthenticateGoogleOAuth() {
 }
 
 /**
+ * Helper to fetch from backend with automatic retry (handles Render free tier cold start delay)
+ */
+async function fetchWithRetry(url, options = {}, retries = 3, backoffMs = 3000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, options);
+      if (response.ok) return response;
+      if (response.status >= 500 && i < retries - 1) {
+        console.warn(`[CP-Sync Background] Backend returned ${response.status}. Retrying in ${backoffMs}ms... (attempt ${i + 1}/${retries})`);
+        await new Promise((r) => setTimeout(r, backoffMs));
+        continue;
+      }
+      return response;
+    } catch (err) {
+      if (i < retries - 1) {
+        console.warn(`[CP-Sync Background] Network fetch failed: ${err.message}. Retrying in ${backoffMs}ms... (attempt ${i + 1}/${retries})`);
+        await new Promise((r) => setTimeout(r, backoffMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+/**
  * Automatically fetches upcoming contests from backend and injects new events directly into Google Calendar.
  */
 export async function triggerAutomaticCalendarSync() {
@@ -94,22 +125,23 @@ export async function triggerAutomaticCalendarSync() {
     const config = await getStoredConfig();
     const backendUrl = (config.backendUrl || 'https://cp-schedule-extension.onrender.com').replace(/\/+$/, '');
     const autoGCalSync = config.autoGCalSync ?? true;
+    const disabledPlatforms = Array.isArray(config.disabledPlatforms) ? config.disabledPlatforms : [];
 
     if (!autoGCalSync) {
       console.log('[CP-Sync Background] Automatic Google Calendar sync is disabled in settings.');
       return 0;
     }
 
-    // 1. Fetch upcoming contests from Custom Contest API
-    const response = await fetch(`${backendUrl}/api/v1/contests`);
+    // 1. Fetch upcoming contests from Backend API with retry logic
+    const response = await fetchWithRetry(`${backendUrl}/api/v1/contests`);
     if (!response.ok) {
       throw new Error(`Backend API returned HTTP ${response.status}`);
     }
     const result = await response.json();
-    const contests = result.data || [];
+    const contests = (result.data || []).filter(c => !disabledPlatforms.includes(c.platform));
 
     if (contests.length === 0) {
-      console.log('[CP-Sync Background] No upcoming contests found to sync.');
+      console.log('[CP-Sync Background] No upcoming contests found matching active platform filters.');
       return 0;
     }
 
@@ -152,6 +184,82 @@ export async function triggerAutomaticCalendarSync() {
     console.error('[CP-Sync Background] Automatic contest sync failed:', error.message);
     throw error;
   }
+}
+
+/**
+ * Searches user's Google Calendar and purges all events created by CP Schedule Extension.
+ * Also clears the local syncedContests memory log.
+ */
+async function handlePurgeCalendarEvents() {
+  const token = await authenticateGoogleOAuth(true);
+  if (!token) {
+    throw new Error('Google Calendar is not connected. Connect your Google Account in Settings first.');
+  }
+
+  console.log('[CP-Sync Background] Starting Google Calendar event purge...');
+  let totalDeleted = 0;
+
+  // Search terms matching our generated events
+  const searchQueries = ['Competitive Programming Contest', '[CODEFORCES]', '[LEETCODE]', '[ATCODER]', '[CODECHEF]', '[KATTIS]', '[UNSTOP]', '[HACKERCUP]', '[GOOGLE]'];
+
+  const foundEventIds = new Set();
+
+  for (const query of searchQueries) {
+    try {
+      const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?q=${encodeURIComponent(query)}&maxResults=250`;
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) continue;
+
+      const data = await res.json();
+      const items = data.items || [];
+
+      for (const item of items) {
+        // Double check summary or description to avoid deleting unrelated user events
+        const summary = item.summary || '';
+        const description = item.description || '';
+        const isCpEvent =
+          /Competitive Programming Contest/i.test(description) ||
+          /\[(CODEFORCES|LEETCODE|ATCODER|CODECHEF|KATTIS|UNSTOP|HACKERCUP|GOOGLE|OTHER|META)\]/i.test(summary);
+
+        if (isCpEvent && item.id) {
+          foundEventIds.add(item.id);
+        }
+      }
+    } catch (e) {
+      console.warn(`[CP-Sync Background] Error searching GCal for "${query}":`, e.message);
+    }
+  }
+
+  console.log(`[CP-Sync Background] Found ${foundEventIds.size} matching CP events to delete.`);
+
+  for (const eventId of foundEventIds) {
+    try {
+      const deleteUrl = `https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`;
+      const delRes = await fetch(deleteUrl, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (delRes.ok || delRes.status === 204 || delRes.status === 410) {
+        totalDeleted++;
+      }
+    } catch (delErr) {
+      console.warn(`[CP-Sync Background] Failed to delete event ${eventId}:`, delErr.message);
+    }
+  }
+
+  // Clear local storage syncedContests history so future syncs can run cleanly
+  await chrome.storage.local.set({ syncedContests: [] });
+  console.log(`[CP-Sync Background] Purged ${totalDeleted} events from Google Calendar.`);
+
+  showNotification(
+    'Calendar Purge Complete',
+    `Successfully deleted ${totalDeleted} contest events from your Google Calendar!`
+  );
+
+  return totalDeleted;
 }
 
 /**
@@ -340,7 +448,7 @@ async function handleSolutionSync(payload) {
 
   console.log(`[CP-Sync Background] Sending solution payload to cloud backend (${backendUrl}/api/v1/sync/github)...`);
 
-  const res = await fetch(`${backendUrl}/api/v1/sync/github`, {
+  const res = await fetchWithRetry(`${backendUrl}/api/v1/sync/github`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(requestBody),
@@ -362,7 +470,7 @@ async function handleSolutionSync(payload) {
 function getStoredConfig() {
   return new Promise((resolve) => {
     if (typeof chrome !== 'undefined' && chrome.storage) {
-      const keys = ['backendUrl', 'githubToken', 'githubOwner', 'githubRepo', 'autoSync', 'autoGCalSync', 'gcalAccessToken'];
+      const keys = ['backendUrl', 'githubToken', 'githubOwner', 'githubRepo', 'autoSync', 'autoGCalSync', 'gcalAccessToken', 'disabledPlatforms'];
       if (chrome.storage.sync) {
         chrome.storage.sync.get(keys, (syncRes) => {
           chrome.storage.local.get(keys, (localRes) => {

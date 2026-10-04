@@ -6,10 +6,16 @@ import axios from 'axios';
  * - CLIST.by (covers HackerCup, Google Kickstart, Google Code Jam, TopCoder, etc.)
  */
 
+// Helper to filter out unwanted noisy platforms like Kattis
+function isAllowedPlatform(resource, title) {
+  const text = `${resource || ''} ${title || ''}`.toLowerCase();
+  if (text.includes('kattis')) return false;
+  return true;
+}
+
 // ─── CLIST.by (covers HackerCup, Google, TopCoder, HackerEarth, etc.) ──────────
 async function fetchClistContests() {
   try {
-    // CLIST has a public API; using the JSON feed endpoint
     const now = new Date();
     const future = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days out
 
@@ -21,7 +27,6 @@ async function fetchClistContests() {
         end__lt: future.toISOString(),
         limit: 100,
         format: 'json',
-        // Filter to known CP resources
         resource__name__in: [
           'codeforces.com',
           'leetcode.com',
@@ -40,46 +45,48 @@ async function fetchClistContests() {
 
     if (!res.data?.objects) return [];
 
-    return res.data.objects.map(item => {
-      const startTime = new Date(item.start);
-      const endTime = new Date(item.end);
-      const resource = (item.resource || '').toLowerCase();
+    return res.data.objects
+      .filter((item) => isAllowedPlatform(item.resource, item.event || item.title))
+      .map((item) => {
+        const startTime = new Date(item.start);
+        const endTime = new Date(item.end);
+        const resource = (item.resource || '').toLowerCase();
 
-      let platform = 'Other';
-      if (resource.includes('codeforces')) platform = 'Codeforces';
-      else if (resource.includes('leetcode')) platform = 'LeetCode';
-      else if (resource.includes('atcoder')) platform = 'AtCoder';
-      else if (resource.includes('codechef')) platform = 'CodeChef';
-      else if (resource.includes('hackerearth')) platform = 'HackerEarth';
-      else if (resource.includes('meta.com')) platform = 'Meta';
-      else if (resource.includes('hackercup') || resource.includes('facebook')) platform = 'HackerCup';
-      else if (resource.includes('google') || resource.includes('codingcompetitions')) platform = 'Google';
-      else if (resource.includes('topcoder')) platform = 'TopCoder';
-      else if (resource.includes('hackerrank')) platform = 'HackerRank';
+        let platform = 'Other';
+        if (resource.includes('codeforces')) platform = 'Codeforces';
+        else if (resource.includes('leetcode')) platform = 'LeetCode';
+        else if (resource.includes('atcoder')) platform = 'AtCoder';
+        else if (resource.includes('codechef')) platform = 'CodeChef';
+        else if (resource.includes('hackerearth')) platform = 'HackerEarth';
+        else if (resource.includes('meta.com')) platform = 'Meta';
+        else if (resource.includes('hackercup') || resource.includes('facebook')) platform = 'HackerCup';
+        else if (resource.includes('google') || resource.includes('codingcompetitions')) platform = 'Google';
+        else if (resource.includes('topcoder')) platform = 'TopCoder';
+        else if (resource.includes('hackerrank')) platform = 'HackerRank';
 
-      const durationSec = Math.max(0, Math.floor((endTime - startTime) / 1000));
-      const nowMs = Date.now();
-      const startMs = startTime.getTime();
-      const endMs = endTime.getTime();
+        const durationSec = Math.max(0, Math.floor((endTime - startTime) / 1000));
+        const nowMs = Date.now();
+        const startMs = startTime.getTime();
+        const endMs = endTime.getTime();
 
-      return {
-        contestId: `clist-${item.id}`,
-        platform,
-        title: item.event || item.title || 'Contest',
-        url: item.href || `https://clist.by/contest/${item.id}/`,
-        startTime,
-        endTime,
-        durationSeconds: durationSec,
-        status: startMs <= nowMs && endMs >= nowMs ? 'CODING' : 'BEFORE',
-      };
-    });
+        return {
+          contestId: `clist-${item.id}`,
+          platform,
+          title: item.event || item.title || 'Contest',
+          url: item.href || `https://clist.by/contest/${item.id}/`,
+          startTime,
+          endTime,
+          durationSeconds: durationSec,
+          status: startMs <= nowMs && endMs >= nowMs ? 'CODING' : 'BEFORE',
+        };
+      });
   } catch (err) {
     console.warn('[Universal CP Service] CLIST API warning:', err.message);
     return [];
   }
 }
 
-// ─── Kontests.net (quick fallback, covers CF/LC/AC/CC/HE) ──────────────────────
+// ─── Kontests.net (covers CF/LC/AC/CC/HE/Google/Meta) ───────────────────────
 async function fetchKontestsContests() {
   try {
     const response = await axios.get('https://kontests.net/api/v1/all', {
@@ -93,6 +100,7 @@ async function fetchKontestsContests() {
 
     for (const item of response.data) {
       if (!item.name || !item.start_time || !item.end_time) continue;
+      if (!isAllowedPlatform(item.site, item.name)) continue;
 
       const startTime = new Date(item.start_time);
       const endTime = new Date(item.end_time);
@@ -146,7 +154,6 @@ async function fetchKontestsContests() {
 
 // ─── Exported aggregator ────────────────────────────────────────────────────────
 export async function fetchUniversalCpContests() {
-  // Run both APIs concurrently; combine and deduplicate
   const [clistContests, kontestsContests] = await Promise.all([
     fetchClistContests(),
     fetchKontestsContests(),
@@ -154,7 +161,6 @@ export async function fetchUniversalCpContests() {
 
   const all = [...clistContests, ...kontestsContests];
 
-  // Deduplicate by title similarity (normalize to lowercase, trim)
   const seen = new Map();
   for (const c of all) {
     const key = `${c.platform.toLowerCase()}_${c.title.toLowerCase().replace(/\s+/g, ' ').trim()}`;

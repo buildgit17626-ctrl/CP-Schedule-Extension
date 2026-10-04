@@ -3,28 +3,28 @@ import mongoose from 'mongoose';
 import { Contest } from '../models/Contest.js';
 import { fetchCodeforcesContests } from '../services/codeforcesService.js';
 import { fetchLeetCodeContests } from '../services/leetcodeService.js';
+import { fetchAtCoderContests } from '../services/atcoderService.js';
 import { fetchCodeChefContests } from '../services/codechefService.js';
 import { fetchUniversalCpContests } from '../services/universalCpService.js';
 import { fetchUnstopContests } from '../services/unstopService.js';
-import { fetchKattisContests } from '../services/kattisService.js';
 
 // In-memory fallback cache when MongoDB is disconnected/offline
 export const inMemoryContests = new Map();
 
 export async function syncAllContests() {
-  console.log('[Cron Job] Starting contest fetch across all platforms (Codeforces, LeetCode, CodeChef, Kattis, Unstop, HackerCup, Google)...');
+  console.log('[Cron Job] Starting contest fetch across all platforms (Codeforces, LeetCode, AtCoder, CodeChef, Unstop, HackerCup, Google)...');
 
   try {
     const results = await Promise.allSettled([
       fetchCodeforcesContests(),
       fetchLeetCodeContests(),
+      fetchAtCoderContests(),
       fetchCodeChefContests(),
       fetchUniversalCpContests(),
       fetchUnstopContests(),
-      fetchKattisContests(),
     ]);
 
-    const [cfContests, lcContests, ccContests, universalContests, unstopContests, kattisContests] = results.map((result, index) => {
+    const [cfContests, lcContests, acContests, ccContests, universalContests, unstopContests] = results.map((result, index) => {
       if (result.status === 'fulfilled') return result.value;
       console.warn(`[Cron Job] Contest source ${index + 1} failed:`, result.reason?.message || result.reason);
       return [];
@@ -33,10 +33,10 @@ export async function syncAllContests() {
     const rawList = [
       ...cfContests,
       ...lcContests,
+      ...acContests,
       ...ccContests,
       ...universalContests,
       ...unstopContests,
-      ...kattisContests,
     ];
 
     // Deduplicate by platform + title
@@ -58,23 +58,15 @@ export async function syncAllContests() {
         sources: {
           codeforces: cfContests.length,
           leetcode: lcContests.length,
+          atcoder: acContests.length,
           codechef: ccContests.length,
           universal: universalContests.length,
           unstop: unstopContests.length,
-          kattis: kattisContests.length,
         },
       };
     }
 
     const isDbConnected = mongoose.connection.readyState === 1;
-
-    for (const [cacheKey, contest] of inMemoryContests) {
-      if (contest.platform === 'AtCoder') inMemoryContests.delete(cacheKey);
-    }
-
-    if (isDbConnected) {
-      await Contest.deleteMany({ platform: 'AtCoder' });
-    }
 
     for (const contest of allContests) {
       if (isDbConnected) {
@@ -94,10 +86,10 @@ export async function syncAllContests() {
       sources: {
         codeforces: cfContests.length,
         leetcode: lcContests.length,
+        atcoder: acContests.length,
         codechef: ccContests.length,
         universal: universalContests.length,
         unstop: unstopContests.length,
-        kattis: kattisContests.length,
       },
     };
   } catch (error) {
