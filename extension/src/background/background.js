@@ -75,6 +75,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
   }
+
+  // ── Proxy fetch for content scripts ──────────────────────────────────────
+  // Codeforces blocks direct fetch from content script context (403).
+  // Content scripts route through here; background has host_permissions + cookies.
+  if (actionType === 'FETCH_HTML') {
+    const { url, credentials } = request;
+    fetch(url, {
+      credentials: credentials || 'include',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': url.includes('codeforces.com') ? 'https://codeforces.com/' : url,
+        'Accept': 'text/html,application/xhtml+xml',
+      },
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          sendResponse({ success: false, status: res.status, html: '' });
+          return;
+        }
+        const html = await res.text();
+        sendResponse({ success: true, status: res.status, html });
+      })
+      .catch((err) => {
+        console.warn('[CP-Sync Background] Proxy fetch failed:', err.message);
+        sendResponse({ success: false, status: 0, html: '', error: err.message });
+      });
+    return true;
+  }
 });
 
 /**
@@ -116,73 +144,117 @@ async function fetchWithRetry(url, options = {}, retries = 3, backoffMs = 3000) 
     }
   }
 }
+  /**
+   * Automatically fetches upcoming contests from backend and injects new events directly into Google Calendar.
+   */
+  export async function triggerAutomaticCalendarSync() {
+    try {
+      const config = await getStoredConfig();
+      const backendUrl = (config.backendUrl || 'https://cp-schedule-extension.onrender.com').replace(/\/+$/, '');
+      const autoGCalSync = config.autoGCalSync ?? true;
+      const disabledPlatforms = Array.isArray(config.disabledPlatforms) ? config.disabledPlatforms : [];
 
-/**
- * Automatically fetches upcoming contests from backend and injects new events directly into Google Calendar.
- */
-export async function triggerAutomaticCalendarSync() {
-  try {
-    const config = await getStoredConfig();
-    const backendUrl = (config.backendUrl || 'https://cp-schedule-extension.onrender.com').replace(/\/+$/, '');
-    const autoGCalSync = config.autoGCalSync ?? true;
-    const disabledPlatforms = Array.isArray(config.disabledPlatforms) ? config.disabledPlatforms : [];
+      if (!autoGCalSync) {
+        console.log('[CP-Sync Background] Automatic Google Calendar sync is disabled in settings.');
+        return 0;
+      }
 
-    if (!autoGCalSync) {
-      console.log('[CP-Sync Background] Automatic Google Calendar sync is disabled in settings.');
-      return 0;
-    }
+      const response = await fetchWithRetry(`${backendUrl}/api/v1/contests`);
+      if (!response.ok) {
+        throw new Error(`Backend API returned HTTP ${response.status}`);
+      }
+      const result = await response.json();
+      const contests = (result.data || []).filter((contest) => !disabledPlatforms.includes(contest.platform));
 
-    // 1. Fetch upcoming contests from Backend API with retry logic
-    const response = await fetchWithRetry(`${backendUrl}/api/v1/contests`);
-    if (!response.ok) {
-      throw new Error(`Backend API returned HTTP ${response.status}`);
-    }
-    const result = await response.json();
-    const contests = (result.data || []).filter(c => !disabledPlatforms.includes(c.platform));
+      if (contests.length === 0) {
+        console.log('[CP-Sync Background] No upcoming contests found matching active platform filters.');
+        return 0;
+      }
 
-    if (contests.length === 0) {
-      console.log('[CP-Sync Background] No upcoming contests found matching active platform filters.');
-      return 0;
-    }
+      const token = await authenticateGoogleOAuth(false);
+      if (!token) {
+        throw new Error('Google Calendar is not connected. Open Settings and click Connect Google Account.');
+      }
 
-    // 2. Get Google OAuth Token (silent interactive: false first)
-    const token = await authenticateGoogleOAuth(false);
-    if (!token) {
-      throw new Error('Google Calendar is not connected. Open Settings and click Connect Google Account.');
-    }
-
-    // 3. Read already synced contest IDs from storage
+    // 3. Read already synced contest IDs from local storage (Level 1 dedup – fast Set lookup)
     const stored = await new Promise((resolve) => {
       chrome.storage.local.get(['syncedContests'], resolve);
     });
-    const syncedContests = stored.syncedContests || [];
+    const syncedContests = new Set(stored.syncedContests || []);
 
     let newSyncedCount = 0;
 
     for (const contest of contests) {
       const uniqueId = `${contest.platform}-${contest.contestId}`;
 
-      if (!syncedContests.includes(uniqueId)) {
-        console.log(`[CP-Sync Background] Auto-injecting contest to Google Calendar: ${contest.title}`);
-        const success = await injectEventIntoGoogleCalendar(token, contest);
-        if (success) {
-          syncedContests.push(uniqueId);
-          newSyncedCount++;
-          showNotification(
-            `Calendar Auto-Sync: ${contest.platform}`,
-            `Added contest "${contest.title}" directly to your Google Calendar!`
-          );
-        }
+      // Level 1: skip if already tracked in local storage (fastest path)
+      if (syncedContests.has(uniqueId)) {
+        continue;
+      }
+
+      // Level 2: verify via GCal API — catches events that existed before this
+      // extension instance started tracking (reinstalls / purge+resync edge cases)
+      const alreadyInGCal = await checkEventExistsInGCal(token, contest);
+      if (alreadyInGCal) {
+        console.log(`[CP-Sync Background] Contest already in GCal, skipping insert: ${contest.title}`);
+        syncedContests.add(uniqueId); // cache locally so we skip GCal API check next cycle
+        continue;
+      }
+
+      console.log(`[CP-Sync Background] Auto-injecting contest to Google Calendar: ${contest.title}`);
+      const success = await injectEventIntoGoogleCalendar(token, contest);
+      if (success) {
+        syncedContests.add(uniqueId);
+        newSyncedCount++;
+        showNotification(
+          `Calendar Auto-Sync: ${contest.platform}`,
+          `Added contest "${contest.title}" directly to your Google Calendar!`
+        );
       }
     }
 
-    // Save updated synced log to local storage
-    await chrome.storage.local.set({ syncedContests });
+    // Batch-save updated synced log (single write at the end)
+    await chrome.storage.local.set({ syncedContests: [...syncedContests] });
     console.log(`[CP-Sync Background] Auto-sync cycle complete. Injected ${newSyncedCount} new contest events.`);
     return newSyncedCount;
   } catch (error) {
     console.error('[CP-Sync Background] Automatic contest sync failed:', error.message);
     throw error;
+  }
+}
+
+/**
+ * Level 2 dedup: query Google Calendar API to check if a contest event already exists.
+ * Searches in a ±1 hour window around the contest start time using the platform tag as query.
+ * Returns false on any API error so we fail-open (allow insert rather than silently skip).
+ */
+async function checkEventExistsInGCal(token, contest) {
+  try {
+    const startDate = new Date(contest.startTime);
+    const timeMin = new Date(startDate.getTime() - 60 * 60 * 1000).toISOString();
+    const timeMax = new Date(startDate.getTime() + 60 * 60 * 1000).toISOString();
+
+    // Use platform tag as search – highly specific, avoids false matches with user events
+    const searchQuery = `[${contest.platform.toUpperCase()}]`;
+    const url =
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events` +
+      `?q=${encodeURIComponent(searchQuery)}` +
+      `&timeMin=${encodeURIComponent(timeMin)}` +
+      `&timeMax=${encodeURIComponent(timeMax)}` +
+      `&singleEvents=true&maxResults=20`;
+
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return false; // On API error, allow insert (fail-open)
+
+    const data = await res.json();
+    const items = data.items || [];
+
+    // Match on first 30 chars of title — robust against minor formatting differences
+    const titleFragment = contest.title.toLowerCase().substring(0, 30);
+    return items.some((item) => (item.summary || '').toLowerCase().includes(titleFragment));
+  } catch (e) {
+    console.warn('[CP-Sync Background] GCal existence check failed, proceeding with insert:', e.message);
+    return false;
   }
 }
 
