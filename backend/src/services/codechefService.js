@@ -11,6 +11,7 @@ export async function fetchCodeChefContests() {
     });
 
     const data = response.data;
+    if (!Array.isArray(data?.future_contests) && !Array.isArray(data?.present_contests)) throw new Error('Invalid CodeChef contest response');
     const futureContests = data.future_contests || [];
     const presentContests = data.present_contests || [];
     const rawContests = [...presentContests, ...futureContests];
@@ -45,6 +46,6 @@ export async function fetchCodeChefContests() {
     return contests;
   } catch (error) {
     console.error('[CodeChef Service] Error fetching contests:', error.message);
-    return [];
+    throw error;
   }
 }

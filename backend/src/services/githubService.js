@@ -63,7 +63,7 @@ export async function commitSolutionToGitHub({
       }
     }
   } catch (err) {
-    // 404 file does not exist, creating new file
+    if (err.status !== 404) throw err;
   }
 
   const commitMessage = `Sync [${platform}] ${problemId} - ${problemTitle}`;
