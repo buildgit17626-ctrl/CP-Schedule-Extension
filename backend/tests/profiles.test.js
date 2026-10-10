@@ -11,6 +11,7 @@ test('sharing requires consent; admin access is separate; withdrawal cannot recr
   const store = { ready: () => ready,
     save: async (id, value) => { records.set(id, { _id: id, ...value }); }, remove: async id => records.delete(id), get: async id => records.get(id),
     page: async () => [...records.values()], refresh: async (id, consentRevision, snapshots) => { const current = records.get(id); if (current?.consentRevision === consentRevision) Object.assign(current, { snapshots, refreshedAt: new Date() }); },
+    discover: async (id, platform, handle, revision) => { const record = records.get(id); if (record) Object.assign(record, { handles: { ...record.handles, [platform]: handle }, consentRevision: revision, refreshedAt: null }); },
   };
   const app = express(); app.use(express.json()); app.use('/api/v1', createProfileRouter({ store, enabled: () => enabled, adminKey: () => admin, fetchProfile: async () => { began(); await new Promise(resolve => { release = resolve; }); return { rating: 1200 }; } }));
   const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
@@ -21,8 +22,10 @@ test('sharing requires consent; admin access is separate; withdrawal cannot recr
     assert.equal(status.status, 200);
     assert.equal((await status.json()).data.available, true);
     assert.equal((await call('/profile-sharing', user, 'PUT', { handles: { LeetCode: 'me' } })).status, 400);
-    const consent = { consent: true, consentVersion: 'profiles-v1', handles: { LeetCode: 'me' } };
+    const consent = { consent: true, consentVersion: 'profiles-v2', handles: {} };
     assert.equal((await call('/profile-sharing', user, 'PUT', consent)).status, 200);
+    assert.equal((await call('/profile-sharing', other, 'PATCH', { handles: { LeetCode: 'me' } })).status, 403);
+    assert.equal((await call('/profile-sharing', user, 'PATCH', { handles: { LeetCode: 'me' } })).status, 200);
     assert.equal((await call('/admin/profiles', user)).status, 401);
     const list = await call('/admin/profiles', admin); assert.equal(list.status, 200); assert.equal(list.headers.get('cache-control'), 'no-store');
     const data = (await list.json()).data; assert.equal(data.items.length, 1); assert.equal(JSON.stringify(data).includes(user), false);
@@ -44,6 +47,17 @@ test('sharing requires consent; admin access is separate; withdrawal cannot recr
 test('profile handles reject unsupported platforms, URL injection and malformed IDs', () => {
   assert.deepEqual(validateHandles({ Codeforces: 'me-1', CSES: '123', LeetCode: '' }), { Codeforces: 'me-1', CSES: '123' });
   for (const handles of [{ Evil: 'me' }, { CSES: '../admin' }, { LeetCode: 'https://evil.test' }, []]) assert.throws(() => validateHandles(handles));
+});
+
+test('the paced server worker refreshes discovered accounts without an admin request', async () => {
+  const record = { _id: 'a'.repeat(64), consentRevision: 'revision', handles: { LeetCode: 'me' } };
+  let pending = true, calls = 0;
+  const store = { ready: () => true, next: async () => pending ? record : null, refresh: async (id, revision, snapshots) => {
+    assert.equal(id, record._id); assert.equal(revision, record.consentRevision); assert.equal(snapshots.LeetCode.solved, 7); pending = false;
+  } };
+  const router = createProfileRouter({ store, enabled: () => true, fetchProfile: async () => { calls++; return { solved: 7 }; } });
+  await router.refreshNext(); assert.equal(calls, 1);
+  await router.refreshNext(); assert.equal(calls, 1);
 });
 test('LeetCode reads only public rating and solved aggregates and marks failures unavailable', async () => {
   const original = globalThis.fetch;

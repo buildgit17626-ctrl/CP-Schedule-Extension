@@ -13,9 +13,26 @@ const repository = {
   get: id => SharedProfile.findOne({ _id: id, consentVersion: CONSENT_VERSION, consentAt: { $gt: new Date(Date.now() - 31536000000) } }).lean(),
   page: cursor => SharedProfile.find({ ...(cursor ? { _id: { $gt: cursor } } : {}), consentVersion: CONSENT_VERSION, consentAt: { $gt: new Date(Date.now() - 31536000000) } }).sort({ _id: 1 }).limit(21).lean(),
   refresh: (id, consentRevision, snapshots) => SharedProfile.updateOne({ _id: id, consentRevision }, { $set: { snapshots, refreshedAt: new Date() } }),
+  discover: (id, platform, handle, revision) => SharedProfile.updateOne({ _id: id, consentVersion: CONSENT_VERSION, consentAt: { $gt: new Date(Date.now() - 31536000000) } }, { $set: { ['handles.' + platform]: handle, consentRevision: revision, refreshedAt: null }, $unset: { ['snapshots.' + platform]: 1 } }),
+  next: () => SharedProfile.findOne({ consentVersion: CONSENT_VERSION, consentAt: { $gt: new Date(Date.now() - 31536000000) }, $or: [{ refreshedAt: null }, { refreshedAt: { $lt: new Date(Date.now() - 86400000) } }], 'handles': { $ne: {} } }).sort({ refreshedAt: 1 }).lean(),
 };
 export function createProfileRouter({ store = repository, fetchProfile = fetchPublicProfile, enabled = () => process.env.PROFILE_SHARING_ENABLED === 'true', adminKey = () => process.env.PROFILE_ADMIN_KEY } = {}) {
   const router = express.Router(), active = new Map();
+  async function refresh(record) {
+    if (!record || !Object.keys(record.handles || {}).length) return;
+    if (!active.has(record._id)) {
+      if (active.size >= 10) throw new Error('Profile refresh busy');
+      active.set(record._id, (async () => {
+        const results = await Promise.all(Object.entries(record.handles).map(async ([platform, handle]) => [platform, await fetchProfile(platform, handle)]));
+        await store.refresh(record._id, record.consentRevision, Object.fromEntries(results));
+      })().finally(() => active.delete(record._id)));
+    }
+    await active.get(record._id);
+  }
+  router.refreshNext = async () => {
+    if (!enabled() || !store.ready() || !store.next) return;
+    for (let index = 0; index < 5; index++) { const record = await store.next(); if (!record) break; await refresh(record); }
+  };
   router.get('/profile-sharing/status', (_req, res) => {
     const key = adminKey();
     const reason = !enabled() ? 'not_enabled' : !store.ready() ? 'database_unavailable' : !key || !/^[A-Za-z0-9_-]{43,128}$/.test(key) ? 'admin_not_configured' : null;
@@ -29,11 +46,23 @@ export function createProfileRouter({ store = repository, fetchProfile = fetchPu
   router.put('/profile-sharing', rateLimit({ limit: 10, windowMs: 3600000 }), async (req, res) => {
     try {
       if (req.body.consent !== true || req.body.consentVersion !== CONSENT_VERSION) return res.status(400).json({ success: false, error: 'Explicit current consent is required.' });
-      const handles = validateHandles(req.body.handles);
+      if (req.body.handles && Object.keys(req.body.handles).length) return res.status(400).json({ success: false, error: 'Profiles are discovered after consent; manual handles are not accepted.' });
+      const handles = {};
       const consentAt = new Date();
       await store.save(req.profileId, { handles, consentVersion: CONSENT_VERSION, consentRevision: randomUUID(), consentAt, snapshots: {}, refreshedAt: null });
       res.json({ success: true, data: { consentVersion: CONSENT_VERSION, consentAt, handles } });
     } catch (error) { res.status(error.message.startsWith('Enter') || error.message.startsWith('Invalid') ? 400 : 503).json({ success: false, error: 'Could not save profile sharing. Check handles and try again.' }); }
+  });
+  router.patch('/profile-sharing', rateLimit({ limit: 30, windowMs: 3600000 }), async (req, res) => {
+    try {
+      const handles = validateHandles(req.body.handles);
+      if (Object.keys(handles).length !== 1) return res.status(400).json({ success: false, error: 'Send one detected account at a time.' });
+      const current = await store.get(req.profileId);
+      if (!current) return res.status(403).json({ success: false, error: 'Automatic discovery requires current consent.' });
+      const [platform, handle] = Object.entries(handles)[0];
+      if (current.handles[platform] !== handle) await store.discover(req.profileId, platform, handle, randomUUID());
+      res.json({ success: true, data: { accepted: true } });
+    } catch { res.status(503).json({ success: false, error: 'Could not save the detected profile. Please retry.' }); }
   });
   router.delete('/profile-sharing', async (req, res) => {
     try { await store.remove(req.profileId); res.json({ success: true, data: { removed: true } }); }
@@ -58,14 +87,7 @@ export function createProfileRouter({ store = repository, fetchProfile = fetchPu
       const record = await store.get(req.params.id);
       if (!record) return res.status(404).json({ success: false, error: 'Profile no longer shared.' });
       if (record.refreshedAt && Date.now() - new Date(record.refreshedAt).getTime() < 86400000) return res.json({ success: true, data: record });
-      if (!active.has(record._id)) {
-        if (active.size >= 10) return res.status(429).json({ success: false, error: 'Too many profile refreshes.' });
-        active.set(record._id, (async () => {
-          const results = await Promise.all(Object.entries(record.handles).map(async ([platform, handle]) => [platform, await fetchProfile(platform, handle)]));
-          await store.refresh(record._id, record.consentRevision, Object.fromEntries(results));
-        })().finally(() => active.delete(record._id)));
-      }
-      await active.get(record._id);
+      await refresh(record);
       res.json({ success: true, data: await store.get(record._id) });
     } catch { res.status(503).json({ success: false, error: 'Profile refresh failed. Try again later.' }); }
   });

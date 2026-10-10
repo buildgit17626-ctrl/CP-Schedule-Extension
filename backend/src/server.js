@@ -7,6 +7,7 @@ import { initCronJobs } from './jobs/cron.js';
 import { rateLimit } from './middleware/rateLimit.js';
 import profileRoutes from './routes/profiles.js';
 import { fileURLToPath } from 'node:url';
+import cron from 'node-cron';
 
 dotenv.config();
 
@@ -46,6 +47,7 @@ app.get('/health', (req, res) => {
 async function startServer() {
   await connectDB();
   initCronJobs();
+  cron.schedule('* * * * *', () => profileRoutes.refreshNext().catch(() => console.warn('[Profiles] Refresh will retry later.')), { noOverlap: true, timezone: 'UTC' });
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Express] CP-Sync API Server running on port ${PORT}`);

@@ -1,5 +1,5 @@
 import * as cheerio from 'cheerio';
-export const CONSENT_VERSION = 'profiles-v1';
+export const CONSENT_VERSION = 'profiles-v2';
 const origins = { Codeforces: 'https://codeforces.com/profile/', LeetCode: 'https://leetcode.com/u/', AtCoder: 'https://atcoder.jp/users/', CodeChef: 'https://www.codechef.com/users/', CSES: 'https://cses.fi/user/' };
 export function validateHandles(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Enter your public profile handles.');

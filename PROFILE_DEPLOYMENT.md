@@ -6,7 +6,7 @@ Existing service: https://dashboard.render.com/web/srv-dakku8942hec73aunca0/depl
 
 ## Deploy the prepared backend
 
-The `codex/profile-sharing-deployment` branch contains the complete tested backend needed by version 1.4.0, including the admin page, profile routes, MongoDB model, public-statistics adapters and readiness diagnostics. It does not include `.env`, node_modules, user data or credentials.
+The `codex/profile-sharing-deployment` branch contains the complete tested backend needed by version 1.5.0, including the admin page, profile routes, MongoDB model, public-statistics adapters and readiness diagnostics. It does not include `.env`, node_modules, user data or credentials.
 
 In the existing Render service's Settings, deploy that branch (or merge the reviewed backend PR and deploy `main`). Keep Root Directory set to `backend`, Build Command `npm ci`, Start Command `npm start`, and Health Check Path `/health`. Preserve the existing service plan and unrelated environment variables.
 
@@ -27,3 +27,4 @@ Choose Manual Deploy → Deploy latest commit, or use Render's environment save/
 3. Reload the rebuilt extension and consent with your own public handle. Confirm the record appears, refresh its public statistics, then withdraw in Settings and confirm it disappears.
 
 If browser control is unavailable, these service-specific steps must be performed in your Render dashboard. The feature cannot be made live by rebuilding the extension alone.
+
