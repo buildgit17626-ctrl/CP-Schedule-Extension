@@ -13,7 +13,7 @@ export async function connectDB() {
     await mongoose.connect(uri, {
       serverSelectionTimeoutMS: 1000,
     });
-    console.log(`[MongoDB] Connected successfully to ${uri}`);
+    console.log('[MongoDB] Connected successfully');
   } catch (err) {
     console.warn(`[MongoDB] Connection failed (${err.message}). System operating in memory-cache mode.`);
   }

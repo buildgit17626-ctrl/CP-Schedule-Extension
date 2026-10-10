@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CP Sync · Admin profiles</title><link rel="stylesheet" href="/admin-assets/admin.css"><script src="/admin-assets/admin.js" defer></script></head><body><main>
+<header><h1>Shared programming profiles</h1><p>Private access for CP Sync maintainers. Only profiles shared with consent appear here.</p></header>
+<form id="login"><label>Admin access key<input id="key" type="password" autocomplete="off" required minlength="43"></label><button>Sign in</button><p class="muted">Use HTTPS. The access key stays in this tab’s memory and is cleared when you sign out.</p></form>
+<section id="dashboard" hidden><div class="toolbar"><button id="reload">Reload list</button><button id="next" disabled>Next 20</button><button id="logout">Sign out</button></div><p class="muted">Detected profiles refresh in the background with daily caching. Blank values mean unavailable; ≥ indicates a partial solved count. Handles come from signed-in account navigation; ownership is not independently verified through platform OAuth.</p><div id="profiles"></div></section><p id="status" role="status"></p>
+</main></body></html>
