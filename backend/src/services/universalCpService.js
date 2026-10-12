@@ -16,12 +16,18 @@ function isAllowedPlatform(resource, title) {
 // ─── CLIST.by (covers HackerCup, Google, TopCoder, HackerEarth, etc.) ──────────
 async function fetchClistContests() {
   try {
+    if (!process.env.CLIST_USERNAME || !process.env.CLIST_API_KEY) {
+      console.warn('[Universal CP Service] CLIST credentials missing; Meta/HackerCup coverage is unavailable from this source.');
+      return [];
+    }
     const now = new Date();
     const future = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days out
 
     const res = await axios.get('https://clist.by/api/v4/contest/', {
       timeout: 12000,
       params: {
+        username: process.env.CLIST_USERNAME,
+        api_key: process.env.CLIST_API_KEY,
         order_by: 'start',
         start__gt: now.toISOString(),
         end__lt: future.toISOString(),
@@ -46,11 +52,11 @@ async function fetchClistContests() {
     if (!res.data?.objects) return [];
 
     return res.data.objects
-      .filter((item) => isAllowedPlatform(item.resource, item.event || item.title))
+      .filter((item) => isAllowedPlatform(typeof item.resource === 'string' ? item.resource : item.resource?.name || item.resource?.host, item.event || item.title))
       .map((item) => {
         const startTime = new Date(item.start);
         const endTime = new Date(item.end);
-        const resource = (item.resource || '').toLowerCase();
+        const resource = (typeof item.resource === 'string' ? item.resource : item.resource?.name || item.resource?.host || '').toLowerCase();
 
         let platform = 'Other';
         if (resource.includes('codeforces')) platform = 'Codeforces';

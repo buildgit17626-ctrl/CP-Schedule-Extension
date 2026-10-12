@@ -83,6 +83,6 @@ export async function fetchUnstopContests() {
     return contests;
   } catch (error) {
     console.warn('[Unstop Service] API warning:', error.message);
-    return [];
+    throw error;
   }
 }

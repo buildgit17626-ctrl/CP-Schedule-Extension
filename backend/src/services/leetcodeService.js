@@ -32,6 +32,7 @@ export async function fetchLeetCodeContests() {
     );
 
     const data = response.data?.data;
+    if (!data || response.data?.errors?.length) throw new Error('Invalid LeetCode contest response');
     const rawContests = [
       ...(data?.upcomingContests || []),
       ...(data?.topTwoContests || []),
@@ -65,6 +66,6 @@ export async function fetchLeetCodeContests() {
     return Array.from(uniqueMap.values());
   } catch (error) {
     console.error('[LeetCode Service] Error fetching GraphQL contests:', error.message);
-    return [];
+    throw error;
   }
 }

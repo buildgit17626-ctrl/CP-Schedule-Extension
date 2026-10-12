@@ -37,7 +37,7 @@ async function fetchAtCoderFromProblems() {
     const response = await axios.get('https://kenkoooo.com/atcoder/resources/contests.json', {
       timeout: 12000,
     });
-    if (!Array.isArray(response.data)) return [];
+    if (!Array.isArray(response.data)) throw new Error('Invalid AtCoder fallback response');
 
     const now = Date.now();
     return response.data
@@ -63,7 +63,7 @@ async function fetchAtCoderFromProblems() {
       .filter(Boolean);
   } catch (err) {
     console.warn('[AtCoder Service] Kenkoooo fallback warning:', err.message);
-    return [];
+    throw err;
   }
 }
 

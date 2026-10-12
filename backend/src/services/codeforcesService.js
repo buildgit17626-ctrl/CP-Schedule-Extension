@@ -35,6 +35,6 @@ export async function fetchCodeforcesContests() {
     });
   } catch (error) {
     console.error('[Codeforces Service] Error fetching contests:', error.message);
-    return [];
+    throw error;
   }
 }

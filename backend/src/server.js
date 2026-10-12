@@ -3,8 +3,9 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { connectDB } from './config/db.js';
 import contestRoutes from './routes/contests.js';
-import syncRoutes from './routes/sync.js';
 import { initCronJobs } from './jobs/cron.js';
+import { rateLimit } from './middleware/rateLimit.js';
+import retiredProfileRoutes from './routes/retiredProfiles.js';
 
 dotenv.config();
 
@@ -13,11 +14,16 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors());
+const proxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
+if (Number.isInteger(proxyHops) && proxyHops > 0 && proxyHops <= 5) app.set('trust proxy', proxyHops);
+app.use('/api', rateLimit());
 app.use(express.json());
 
 // Routes
 app.use('/api/v1', contestRoutes);
-app.use('/api/v1', syncRoutes);
+app.use('/api/v1', retiredProfileRoutes);
+// Backups now go directly from the extension to GitHub; never relay credentials.
+app.post('/api/v1/sync/github', (_req, res) => res.status(410).json({ success: false, error: 'Update the extension to use direct GitHub backups.' }));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
